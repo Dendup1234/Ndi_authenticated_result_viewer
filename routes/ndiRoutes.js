@@ -6,6 +6,6 @@ import {
 
 const router = express.Router();
 
-router.post("/webhook/callback", handleNDIWebhook);
+router.post("/webhook/callbacks", handleNDIWebhook);
 
 export default router;
