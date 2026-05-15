@@ -14,9 +14,6 @@ app.get('/', (req, res) => {
     res.send('Hello World Dendup is here!');
 });
 
-app.get('/webhook', (req, res) => {
-    res.send('webhook response is here');
-});
 
 // routes
 app.use("/api/ndi", ndiRoutes)
