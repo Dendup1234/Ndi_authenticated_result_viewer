@@ -2,7 +2,7 @@ import express from 'express';
 import dotenv from 'dotenv';
 import connectDB from './config/db.js';
 import ndiRoutes from "./routes/ndiRoutes.js";
-
+//new commit
 dotenv.config();
 
 const app = express();
@@ -13,7 +13,6 @@ app.use(express.json());
 app.get('/', (req, res) => {
     res.send('Hello World Dendup is here!');
 });
-
 
 // routes
 app.use("/api/ndi", ndiRoutes)
