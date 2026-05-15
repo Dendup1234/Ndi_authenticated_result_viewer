@@ -1,0 +1,31 @@
+name: deployment
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: checkout code
+        uses: actions/checkout@v3
+
+      - name: Execute remote ssh commands using ssh key
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT }}
+          script: |
+           export PATH=$PATH:/root/.nvm/versions/node/v22.19.0/bin
+           echo "🚀 Deploying Edu Agent Backend..."
+
+           cd /root/Ndi_authenticated_result_viewer
+           git fetch origin master
+           git reset --hard origin/master
+           npm install
+           pm2 reload hack-back --update-env
