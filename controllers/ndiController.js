@@ -1,5 +1,7 @@
 // controllers/ndiController.js
 
+import Student from "../models/Student.js";
+
 export const handleNDIWebhook = async (req, res) => {
     try {
         console.log("NDI webhook payload:", JSON.stringify(req.body, null, 2));
@@ -31,24 +33,26 @@ export const handleNDIWebhook = async (req, res) => {
             });
         }
 
-        // Save or update student in your DB
-        // const student = await Student.findOneAndUpdate(
-        //   { cid },
-        //   {
-        //     cid,
-        //     fullName,
-        //     dob,
-        //     ndiVerified: true,
-        //     ndiPayload: payload,
-        //   },
-        //   { new: true, upsert: true }
-        // );
+        const student = await Student.findOneAndUpdate(
+            { cid },
+            {
+                cid,
+                fullName,
+                dob,
+                ndiVerified: true,
+                ndiPayload: payload,
+            },
+            {
+                new: true,
+                upsert: true,
+                runValidators: true,
+                setDefaultsOnInsert: true,
+            }
+        );
 
         return res.status(200).json({
             message: "NDI student information received successfully",
-            cid,
-            fullName,
-            dob,
+            student,
         });
     } catch (error) {
         return res.status(500).json({
