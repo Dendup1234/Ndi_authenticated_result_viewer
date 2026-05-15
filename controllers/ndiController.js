@@ -1,13 +1,14 @@
 // controllers/ndiController.js
 
 import Student from "../models/Student.js";
+import { signToken } from "../utils/jwt.js";
 
 const getProofPayload = (payload) =>
     payload?.data?.requested_presentation
         ? payload.data
         : payload?.proof?.requested_presentation
-          ? payload.proof
-          : payload;
+            ? payload.proof
+            : payload;
 
 const getRevealedAttribute = (revealedAttributes, names) => {
     for (const name of names) {
@@ -87,25 +88,34 @@ export const handleNDIWebhook = async (req, res) => {
             });
         }
 
-        const student = await Student.findOneAndUpdate(
-            { cid },
-            {
+        let student = await Student.findOne({ cid });
+
+        let isNewUser = false;
+
+        if (!student) {
+            student = await Student.create({
                 cid,
                 fullName,
                 dob,
                 ndiVerified: true,
                 ndiPayload: payload,
-            },
-            {
-                new: true,
-                upsert: true,
-                runValidators: true,
-                setDefaultsOnInsert: true,
-            }
-        );
+            });
 
-        return res.status(202).json({
-            message: "NDI student information received successfully",
+            isNewUser = true;
+        }
+
+        const accessToken = signToken({
+            sub: student._id,
+            cid: student.cid,
+            fullName: student.fullName,
+        });
+
+        return res.status(200).json({
+            message: isNewUser
+                ? "New student created and logged in successfully"
+                : "Existing student logged in successfully",
+            isNewUser,
+            accessToken,
             student,
         });
     } catch (error) {
