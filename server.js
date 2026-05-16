@@ -4,6 +4,7 @@ import connectDB from './config/db.js';
 import ndiRoutes from "./routes/ndiRoutes.js";
 import ngrok from 'ngrok';
 import cors from 'cors';
+import { startNDINats } from "./services/ndiNats.js";
 //new commit
 dotenv.config();
 
@@ -15,8 +16,7 @@ app.use(cors());
 app.use(express.json());
 
 app.get('/', (req, res) => {
-    console.log('hello world');
-    res.send('Hello World Dendup is here!');
+    res.send('hello world');
 });
 
 // routes
@@ -24,8 +24,9 @@ app.use("/api/ndi", ndiRoutes)
 
 await connectDB();
 
-app.listen(port, "0.0.0.0", () => {
+app.listen(port, "0.0.0.0", async () => {
     console.log(`Server running at http://localhost:${port}`);
+    await startNDINats();
 });
 
 

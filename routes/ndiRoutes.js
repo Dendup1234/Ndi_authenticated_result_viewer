@@ -1,15 +1,12 @@
 import express from "express";
-
 import {
-    handleNDIWebhook,
-    handleNDIEvents,
-    handleNDILoginStatus,
+    startNDILogin,
+    checkNDILoginStatus,
 } from "../controllers/ndiController.js";
 
 const router = express.Router();
 
-router.get("/events/:threadId", handleNDIEvents);
-router.get("/status/:threadId", handleNDILoginStatus);
-router.post("/webhook/callbacks", handleNDIWebhook);
+router.post("/login/start", startNDILogin);
+router.get("/login/status/:threadId", checkNDILoginStatus);
 
 export default router;

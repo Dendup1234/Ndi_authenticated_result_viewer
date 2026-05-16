@@ -18,7 +18,9 @@
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.6.2",
-    "ngrok": "^5.0.0-beta.2"
+    "nats": "^2.29.3",
+    "ngrok": "^5.0.0-beta.2",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

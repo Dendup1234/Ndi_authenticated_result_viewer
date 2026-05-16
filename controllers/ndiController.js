@@ -1,20 +1,10 @@
 // controllers/ndiController.js
 
+import QRCode from "qrcode";
 import Student from "../models/Student.js";
 import { signToken } from "../utils/jwt.js";
-import NdiLoginSession from "../models/NdiLoginSession.js";
-import {
-    addClient,
-    removeClient,
-    sendToClient,
-} from "../utils/ndiSse.js";
-
-const getProofPayload = (payload) =>
-    payload?.data?.requested_presentation
-        ? payload.data
-        : payload?.proof?.requested_presentation
-            ? payload.proof
-            : payload;
+import { ndiSessions } from "../utils/ndiSessionStore.js";
+import { getNDIAccessToken } from "../services/ndiAuth.js";
 
 const getRevealedAttribute = (revealedAttributes, names) => {
     for (const name of names) {
@@ -36,182 +26,195 @@ const getRevealedAttribute = (revealedAttributes, names) => {
     return "";
 };
 
-export const handleNDIWebhook = async (req, res) => {
+export const startNDILogin = async (req, res) => {
     try {
-        console.log("NDI webhook payload:", JSON.stringify(req.body, null, 2));
+        const accessToken = await getNDIAccessToken();
 
-        const payload = req.body;
-        const proofData = getProofPayload(payload);
+        const response = await fetch(
+            "https://demo-client.bhutanndi.com/verifier/v1/proof-request",
+            {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    proofName: "Sign in with NDI",
+                    proofAttributes: [
+                        {
+                            name: "Full Name",
+                            restrictions: [
+                                {
+                                    schema_name: "https://dev-schema.ngotag.com/schemas/c7952a0a-e9b5-4a4b-a714-1e5d0a1ae076",
+                                },
+                            ],
+                        },
+                        {
+                            name: "ID Number",
+                            restrictions: [
+                                {
+                                    schema_name: "https://dev-schema.ngotag.com/schemas/c7952a0a-e9b5-4a4b-a714-1e5d0a1ae076",
+                                },
+                            ],
+                        },
+                    ],
+                    purpose: "login",
+                    authenticationLevel: "Standard",
+                    isShortenUrl: true,
+                }),
+            }
+        );
 
-        if (
-            proofData?.type === "present-proof/presentation-result" &&
-            proofData?.verification_result !== "ProofValidated"
-        ) {
-            return res.status(202).json({
-                message: "NDI proof response received but proof was not validated",
-                verificationResult: proofData?.verification_result,
+        const result = await response.json();
+
+        if (!response.ok) {
+            return res.status(response.status).json(result);
+        }
+
+        const proofData = result.data || result;
+        const threadId =
+            proofData.proofRequestThreadId ||
+            proofData.threadId ||
+            proofData.thid;
+
+        if (!threadId || !proofData.proofRequestURL) {
+            return res.status(502).json({
+                message: "NDI proof request response did not include threadId or proofRequestURL",
+                result,
             });
         }
 
-        const revealedAttributes =
-            proofData?.requested_presentation?.revealed_attrs || {};
-
-        const cid =
-            getRevealedAttribute(revealedAttributes, [
-                "ID Number",
-                "CID",
-                "cid",
-                "Citizenship ID Number",
-            ]) ||
-            proofData?.cid ||
-            proofData?.attributes?.cid;
-
-        const fullName =
-            getRevealedAttribute(revealedAttributes, [
-                "Full Name",
-                "fullName",
-                "Name",
-                "name",
-            ]) ||
-            proofData?.fullName ||
-            proofData?.attributes?.fullName;
-
-        const dob =
-            getRevealedAttribute(revealedAttributes, [
-                "Date of Birth",
-                "DOB",
-                "dob",
-                "Birth Date",
-            ]) ||
-            proofData?.dob ||
-            proofData?.attributes?.dob;
-
-        if (!cid) {
-            return res.status(400).json({
-                message: "CID not found in NDI proof response",
-                revealedAttributeNames: Object.keys(revealedAttributes),
-                receivedPayload: payload,
-            });
-        }
-
-        let student = await Student.findOne({ cid });
-
-        let isNewUser = false;
-
-        if (!student) {
-            student = await Student.create({
-                cid,
-                fullName,
-                dob,
-                ndiVerified: true,
-                ndiPayload: payload,
-            });
-
-            isNewUser = true;
-        }
-
-        // SSE trigger for frontend
-        const threadId = proofData?.thid;
-
-        const accessToken = signToken({
-            id: student._id,
-            cid: student.cid,
-            fullName: student.fullName,
+        ndiSessions.set(threadId, {
+            status: "pending",
         });
 
-        if (threadId) {
-            await NdiLoginSession.findOneAndUpdate(
-                { threadId },
-                {
-                    threadId,
-                    status: "verified",
-                    token: accessToken,
-                    student: student._id,
-                },
-                {
-                    upsert: true,
-                    new: true,
-                }
-            );
+        const qrSvg = await QRCode.toString(proofData.proofRequestURL, {
+            type: "svg",
+            margin: 0,
+        });
 
-            sendToClient(threadId, "ndi-verified", {
-                token: accessToken,
-                user: {
-                    id: student._id,
-                    cid: student.cid,
-                    fullName: student.fullName,
-                },
-            });
-
-            removeClient(threadId);
-        }
-
-        return res.status(202).json({
-            message: isNewUser
-                ? "New student created and logged in successfully"
-                : "Existing student logged in successfully",
-            isNewUser,
-            accessToken,
-            student,
+        return res.status(201).json({
+            threadId,
+            proofRequestURL: proofData.proofRequestURL,
+            deepLinkURL: proofData.deepLinkURL,
+            qrSvg,
         });
     } catch (error) {
         return res.status(500).json({
-            message: "Failed to process NDI webhook",
+            message: "Failed to start NDI login",
             error: error.message,
         });
     }
 };
 
-// handle ndi events
-export const handleNDIEvents = async (req, res) => {
-    const { threadId } = req.params;
+export const handleNDIProofResult = async (threadId, payload) => {
+    const proofData = payload?.data || payload;
 
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-    res.setHeader("Access-Control-Allow-Origin", "*");
-
-    res.write(`event: connected\n`);
-    res.write(`data: ${JSON.stringify({ status: "waiting", threadId })}\n\n`);
-
-    addClient(threadId, res);
-
-    const existingSession = await NdiLoginSession.findOne({ threadId }).populate("student");
-
-    if (existingSession?.status === "verified") {
-        res.write(`event: ndi-verified\n`);
-        res.write(
-            `data: ${JSON.stringify({
-                token: existingSession.token,
-                user: existingSession.student,
-            })}\n\n`
-        );
-        res.end();
-        removeClient(threadId);
+    if (
+        proofData?.type === "present-proof/presentation-result" &&
+        proofData?.verification_result !== "ProofValidated"
+    ) {
+        ndiSessions.set(threadId, {
+            status: "failed",
+            reason: proofData?.verification_result || "Proof not validated",
+        });
         return;
     }
 
-    req.on("close", () => {
-        removeClient(threadId);
+    const revealedAttributes =
+        proofData?.requested_presentation?.revealed_attrs || {};
+
+    const cid = getRevealedAttribute(revealedAttributes, [
+        "ID Number",
+        "CID",
+        "cid",
+    ]);
+
+    const fullName = getRevealedAttribute(revealedAttributes, [
+        "Full Name",
+        "fullName",
+        "Name",
+    ]);
+
+    if (!cid) {
+        ndiSessions.set(threadId, {
+            status: "failed",
+            reason: "CID not found",
+        });
+        return;
+    }
+
+    const existingStudent = await Student.findOne({ cid });
+    let isNewUser = false;
+
+    const student = await Student.findOneAndUpdate(
+        { cid },
+        {
+            cid,
+            fullName,
+            dob: getRevealedAttribute(revealedAttributes, [
+                "Date of Birth",
+                "DOB",
+                "dob",
+                "Birth Date",
+            ]),
+            ndiVerified: true,
+            ndiPayload: payload,
+        },
+        {
+            new: true,
+            upsert: true,
+            runValidators: true,
+            setDefaultsOnInsert: true,
+        }
+    );
+
+    isNewUser = !existingStudent;
+
+    const accessToken = signToken({
+        id: student._id,
+        cid: student.cid,
+        fullName: student.fullName,
+    });
+
+    ndiSessions.set(threadId, {
+        status: "verified",
+        accessToken,
+        student,
+        isNewUser,
+    });
+
+    console.log("✅ NDI login verified:", {
+        threadId,
+        cid,
+        fullName,
     });
 };
 
-// check ndi status
-export const handleNDILoginStatus = async (req, res) => {
+export const checkNDILoginStatus = async (req, res) => {
     const { threadId } = req.params;
 
-    const session = await NdiLoginSession.findOne({ threadId }).populate("student");
+    const session = ndiSessions.get(threadId);
 
-    if (!session) {
-        return res.status(404).json({
-            status: "not_found",
+    if (!session || session.status === "pending") {
+        return res.status(202).json({
+            verified: false,
+            message: "Waiting for NDI approval",
+        });
+    }
+
+    if (session.status === "failed") {
+        return res.status(400).json({
+            verified: false,
+            message: "NDI verification failed",
+            reason: session.reason,
         });
     }
 
     return res.status(200).json({
-        status: session.status,
-        token: session.token,
-        user: session.student,
-        error: session.error,
+        verified: true,
+        accessToken: session.accessToken,
+        student: session.student,
+        isNewUser: session.isNewUser,
     });
 };
