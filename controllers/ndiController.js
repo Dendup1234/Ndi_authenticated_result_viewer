@@ -2,6 +2,12 @@
 
 import Student from "../models/Student.js";
 import { signToken } from "../utils/jwt.js";
+import NdiLoginSession from "../models/NdiLoginSession.js";
+import {
+    addClient,
+    removeClient,
+    sendToClient,
+} from "../utils/ndiSse.js";
 
 const getProofPayload = (payload) =>
     payload?.data?.requested_presentation
@@ -104,13 +110,43 @@ export const handleNDIWebhook = async (req, res) => {
             isNewUser = true;
         }
 
+        // SSE trigger for frontend
+        const threadId = proofData?.thid;
+
         const accessToken = signToken({
-            sub: student._id,
+            id: student._id,
             cid: student.cid,
             fullName: student.fullName,
         });
 
-        return res.status(200).json({
+        if (threadId) {
+            await NdiLoginSession.findOneAndUpdate(
+                { threadId },
+                {
+                    threadId,
+                    status: "verified",
+                    token: accessToken,
+                    student: student._id,
+                },
+                {
+                    upsert: true,
+                    new: true,
+                }
+            );
+
+            sendToClient(threadId, "ndi-verified", {
+                token: accessToken,
+                user: {
+                    id: student._id,
+                    cid: student.cid,
+                    fullName: student.fullName,
+                },
+            });
+
+            removeClient(threadId);
+        }
+
+        return res.status(202).json({
             message: isNewUser
                 ? "New student created and logged in successfully"
                 : "Existing student logged in successfully",
@@ -124,4 +160,58 @@ export const handleNDIWebhook = async (req, res) => {
             error: error.message,
         });
     }
+};
+
+// handle ndi events
+export const handleNDIEvents = async (req, res) => {
+    const { threadId } = req.params;
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+
+    res.write(`event: connected\n`);
+    res.write(`data: ${JSON.stringify({ status: "waiting", threadId })}\n\n`);
+
+    addClient(threadId, res);
+
+    const existingSession = await NdiLoginSession.findOne({ threadId }).populate("student");
+
+    if (existingSession?.status === "verified") {
+        res.write(`event: ndi-verified\n`);
+        res.write(
+            `data: ${JSON.stringify({
+                token: existingSession.token,
+                user: existingSession.student,
+            })}\n\n`
+        );
+        res.end();
+        removeClient(threadId);
+        return;
+    }
+
+    req.on("close", () => {
+        removeClient(threadId);
+    });
+};
+
+// check ndi status
+export const handleNDILoginStatus = async (req, res) => {
+    const { threadId } = req.params;
+
+    const session = await NdiLoginSession.findOne({ threadId }).populate("student");
+
+    if (!session) {
+        return res.status(404).json({
+            status: "not_found",
+        });
+    }
+
+    return res.status(200).json({
+        status: session.status,
+        token: session.token,
+        user: session.student,
+        error: session.error,
+    });
 };

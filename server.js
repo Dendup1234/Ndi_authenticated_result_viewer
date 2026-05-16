@@ -3,11 +3,14 @@ import dotenv from 'dotenv';
 import connectDB from './config/db.js';
 import ndiRoutes from "./routes/ndiRoutes.js";
 import ngrok from 'ngrok';
+import cors from 'cors';
 //new commit
 dotenv.config();
 
+// using the cors
 const app = express();
 const port = process.env.PORT ?? 3000;
+app.use(cors());
 
 app.use(express.json());
 
