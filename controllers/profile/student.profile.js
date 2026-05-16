@@ -1,10 +1,10 @@
-import Student from "../../models/student.js";
+import Student from "../../models/Student.js";
 
 
 // Getting profile of the student
 export const getProfile = async (req, res) => {
     try {
-        const user_id = req.user.sub;
+        const user_id = req.user.id;
         //Hides password and return plain json format
         const student = await Student.findById(user_id).select("-password").lean();
         if (!student) {

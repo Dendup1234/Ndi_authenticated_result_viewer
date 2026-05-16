@@ -2,6 +2,7 @@ import express from 'express';
 import dotenv from 'dotenv';
 import connectDB from './config/db.js';
 import ndiRoutes from "./routes/ndiRoutes.js";
+import studentRoutes from "./routes/student/profile.js"
 import ngrok from 'ngrok';
 import cors from 'cors';
 import { startNDINats } from "./services/ndiNats.js";
@@ -20,7 +21,8 @@ app.get('/', (req, res) => {
 });
 
 // routes
-app.use("/api/ndi", ndiRoutes)
+app.use("/api/ndi", ndiRoutes);
+app.use("/api/student", studentRoutes);
 
 await connectDB();
 
